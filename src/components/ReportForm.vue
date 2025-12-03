@@ -1,13 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { generateAndDownloadZip } from '../services/ZipService';
+import { computed, ref } from 'vue';
+import {
+  generateAndDownloadReports,
+  type ExportFormat,
+  type GenerationMode,
+} from '../services/ExportService';
 
 const domain = ref('');
-const type = ref<'days' | 'reports'>('days');
-const count = ref(1);
+const mode = ref<GenerationMode>('days');
+const count = ref(1); // Default to 1 day/report
+const format = ref<ExportFormat>('zip');
 const loading = ref(false);
 const error = ref('');
 const success = ref(false);
+
+// Standard DMARC reporting periods often default to daily (1 day).
+// Users might want to see trends over a week (7), two weeks (14), or a month (30).
+const commonDays = [1, 7, 14, 30];
+const isGzip = computed(() => format.value === 'gzip');
 
 const generate = async () => {
   if (!domain.value) {
@@ -19,8 +29,13 @@ const generate = async () => {
   success.value = false;
   loading.value = true;
 
+  const requestedCount = isGzip.value ? 1 : count.value;
+
   try {
-    await generateAndDownloadZip(domain.value, count.value, type.value);
+    await generateAndDownloadReports(domain.value, requestedCount, mode.value, format.value);
+    if (isGzip.value) {
+      count.value = 1;
+    }
     success.value = true;
   } catch (e) {
     error.value = 'Failed to generate reports. Please try again.';
@@ -52,14 +67,14 @@ const generate = async () => {
         />
       </div>
 
-      <!-- Type Selection -->
+      <!-- Mode Selection -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-2">Generation Mode</label>
         <div class="flex space-x-4">
           <label class="inline-flex items-center">
             <input
               type="radio"
-              v-model="type"
+              v-model="mode"
               value="days"
               class="form-radio text-indigo-600"
             />
@@ -68,7 +83,7 @@ const generate = async () => {
           <label class="inline-flex items-center">
             <input
               type="radio"
-              v-model="type"
+              v-model="mode"
               value="reports"
               class="form-radio text-indigo-600"
             />
@@ -77,20 +92,75 @@ const generate = async () => {
         </div>
       </div>
 
-      <!-- Count Input -->
+      <!-- Compression Selection -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Output Format</label>
+        <div class="flex space-x-4">
+          <label class="inline-flex items-center">
+            <input
+              type="radio"
+              v-model="format"
+              value="zip"
+              class="form-radio text-indigo-600"
+            />
+            <span class="ml-2 text-gray-700">ZIP Archive (.zip)</span>
+          </label>
+          <label class="inline-flex items-center">
+            <input
+              type="radio"
+              v-model="format"
+              value="gzip"
+              class="form-radio text-indigo-600"
+            />
+            <span class="ml-2 text-gray-700">GZIP File (.xml.gz)</span>
+          </label>
+        </div>
+        <p v-if="format === 'gzip'" class="text-xs text-gray-500 mt-1">
+          GZIP output includes a single report (latest date range).
+        </p>
+      </div>
+
+      <!-- Count/Duration Input -->
       <div>
         <label for="count" class="block text-sm font-medium text-gray-700">
-          {{ type === 'days' ? 'Number of Days' : 'Number of Reports' }}
+          {{ mode === 'days' ? 'Duration (Days)' : 'Number of Reports' }}
         </label>
-        <input
-          id="count"
-          v-model="count"
-          type="number"
-          min="1"
-          max="30"
-          class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-        />
-        <p class="text-xs text-gray-500 mt-1">Max 30</p>
+        
+        <div
+          v-if="mode === 'days' && format === 'zip'"
+          class="mt-2 grid grid-cols-4 gap-2"
+        >
+          <button
+            v-for="days in commonDays"
+            :key="days"
+            type="button"
+            @click="count = days"
+            :class="[
+              'px-3 py-2 border text-sm font-medium rounded-md focus:outline-none',
+              count === days
+                ? 'bg-indigo-600 text-white border-transparent'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            ]"
+          >
+            {{ days }}d
+          </button>
+        </div>
+        
+        <template v-else>
+          <input
+            id="count"
+            v-model="count"
+            type="number"
+            :disabled="format === 'gzip'"
+            min="1"
+            max="30"
+            class="mt-2 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
+          />
+          <p v-if="format === 'gzip'" class="text-xs text-gray-500 mt-1">
+            Count is fixed to 1 when exporting GZIP reports.
+          </p>
+          <p v-else-if="mode === 'reports'" class="text-xs text-gray-500 mt-1">Max 30</p>
+        </template>
       </div>
 
       <!-- Error Message -->
@@ -115,4 +185,3 @@ const generate = async () => {
     </form>
   </div>
 </template>
-

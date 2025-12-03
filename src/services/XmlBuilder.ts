@@ -1,6 +1,7 @@
 import type { DmarcReport } from './DmarcGenerator';
 
-const escapeXml = (unsafe: string | number): string => {
+const escapeXml = (unsafe: string | number | undefined): string => {
+  if (unsafe === undefined) return '';
   return String(unsafe)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -11,7 +12,7 @@ const escapeXml = (unsafe: string | number): string => {
 
 export const jsonToXml = (report: DmarcReport): string => {
   let xml = '<?xml version="1.0" encoding="UTF-8" ?>\n';
-  xml += '<feedback>\n';
+  xml += '<feedback xmlns="http://dmarc.org/dmarc-xml/0.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://dmarc.org/dmarc-xml/0.1 http://dmarc.org/dmarc-xml/0.1.xsd">\n';
 
   // Report Metadata
   xml += '  <report_metadata>\n';
@@ -45,10 +46,25 @@ export const jsonToXml = (report: DmarcReport): string => {
     xml += `        <disposition>${escapeXml(record.row.policy_evaluated.disposition)}</disposition>\n`;
     xml += `        <dkim>${escapeXml(record.row.policy_evaluated.dkim)}</dkim>\n`;
     xml += `        <spf>${escapeXml(record.row.policy_evaluated.spf)}</spf>\n`;
+    
+    if (record.row.policy_evaluated.reason) {
+      record.row.policy_evaluated.reason.forEach(reason => {
+        xml += '        <reason>\n';
+        xml += `          <type>${escapeXml(reason.type)}</type>\n`;
+        if (reason.comment) {
+          xml += `          <comment>${escapeXml(reason.comment)}</comment>\n`;
+        }
+        xml += '        </reason>\n';
+      });
+    }
+
     xml += '      </policy_evaluated>\n';
     xml += '    </row>\n';
     xml += '    <identifiers>\n';
     xml += `      <header_from>${escapeXml(record.identifiers.header_from)}</header_from>\n`;
+    if (record.identifiers.envelope_from) {
+        xml += `      <envelope_from>${escapeXml(record.identifiers.envelope_from)}</envelope_from>\n`;
+    }
     xml += '    </identifiers>\n';
     xml += '    <auth_results>\n';
     

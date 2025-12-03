@@ -27,10 +27,15 @@ export interface DmarcReport {
         disposition: 'none' | 'quarantine' | 'reject';
         dkim: 'pass' | 'fail';
         spf: 'pass' | 'fail';
+        reason?: Array<{
+          type: 'forwarded' | 'sampled_out' | 'trusted_forwarder' | 'mailing_list' | 'local_policy' | 'other';
+          comment?: string;
+        }>;
       };
     };
     identifiers: {
       header_from: string;
+      envelope_from?: string;
     };
     auth_results: {
       dkim: Array<{
@@ -57,27 +62,76 @@ export const generateDmarcReport = (domain: string, date: Date = new Date()): Dm
   const policies: ('none' | 'quarantine' | 'reject')[] = ['none', 'quarantine', 'reject'];
   const policy = policies[Math.floor(Math.random() * policies.length)] ?? 'none';
 
-  // Generate 1-10 records
-  const recordCount = faker.number.int({ min: 1, max: 10 });
+  // Increase record count for realism (15-50)
+  const recordCount = faker.number.int({ min: 15, max: 50 });
   const records = [];
+
+  // Realistic Selectors
+  const selectors = ['default', 'google', 'mail', 'k1', 'selector1', '2023'];
 
   for (let i = 0; i < recordCount; i++) {
     const sourceIp = faker.internet.ipv4();
-    const count = faker.number.int({ min: 1, max: 1000 });
+    const count = faker.number.int({ min: 1, max: 2000 });
     
-    // Determine auth results
-    const dkimResult = faker.helpers.arrayElement(['pass', 'fail'] as const);
-    const spfResult = faker.helpers.arrayElement(['pass', 'fail'] as const);
-    
-    // Disposition depends on policy and results
+    // Determine basic scenario
+    const scenario = faker.helpers.weightedArrayElement([
+      { weight: 70, value: 'pass' }, // 70% clean pass
+      { weight: 15, value: 'fail_all' }, // 15% total failure
+      { weight: 5, value: 'forwarded' }, // 5% forwarding break
+      { weight: 5, value: 'mixed' }, // 5% mixed results
+      { weight: 5, value: 'override' }, // 5% local policy override
+    ]);
+
+    let dkimResult: 'pass' | 'fail' = 'pass';
+    let spfResult: 'pass' | 'fail' = 'pass';
     let disposition: 'none' | 'quarantine' | 'reject' = 'none';
-    if (policy !== 'none' && (dkimResult === 'fail' || spfResult === 'fail')) {
-       // Simple logic: if fails, apply policy (simplified)
-       if (dkimResult === 'fail' && spfResult === 'fail') {
-           disposition = policy;
-       }
+    let reasons: DmarcReport['record'][0]['row']['policy_evaluated']['reason'] = [];
+    let envelopeFrom = domain;
+
+    switch (scenario) {
+      case 'pass':
+        dkimResult = 'pass';
+        spfResult = 'pass';
+        disposition = 'none';
+        break;
+      case 'fail_all':
+        dkimResult = 'fail';
+        spfResult = 'fail';
+        disposition = policy; // Apply policy on failure
+        break;
+      case 'forwarded':
+        dkimResult = 'pass'; // DKIM often survives forwarding
+        spfResult = 'fail'; // SPF often breaks
+        disposition = 'none'; // Usually DMARC passes if one aligns
+        // Add reason if policy would have applied but didn't, or just to note it
+        // Actually, if one aligns (DKIM), disposition is 'none' and no reason strictly needed for override,
+        // but we can add a "forwarded" type if we want to simulate a known forwarder scenario where maybe both failed?
+        // Let's simulate a case where both fail due to forwarding but we override? 
+        // Or just standard forwarding where SPF breaks.
+        reasons.push({
+            type: 'forwarded',
+            comment: 'Message via forwarding service'
+        });
+        // Change envelope from to unrelated domain
+        envelopeFrom = faker.internet.domainName();
+        break;
+      case 'mixed':
+        dkimResult = 'fail';
+        spfResult = 'pass';
+        disposition = 'none'; // One pass = pass
+        break;
+      case 'override':
+        dkimResult = 'fail';
+        spfResult = 'fail';
+        disposition = 'none'; // Override strict policy
+        reasons.push({
+          type: 'local_policy',
+          comment: 'Trusted partner override'
+        });
+        break;
     }
 
+    // Construct record
     records.push({
       row: {
         source_ip: sourceIp,
@@ -86,22 +140,24 @@ export const generateDmarcReport = (domain: string, date: Date = new Date()): Dm
           disposition: disposition,
           dkim: dkimResult,
           spf: spfResult,
+          reason: reasons.length > 0 ? reasons : undefined,
         },
       },
       identifiers: {
         header_from: domain,
+        envelope_from: envelopeFrom !== domain ? envelopeFrom : undefined
       },
       auth_results: {
         dkim: [
           {
             domain: domain,
             result: dkimResult,
-            selector: faker.lorem.word(),
+            selector: faker.helpers.arrayElement(selectors),
           },
         ],
         spf: [
           {
-            domain: domain,
+            domain: envelopeFrom, // SPF checks envelope sender
             result: spfResult,
           },
         ],
